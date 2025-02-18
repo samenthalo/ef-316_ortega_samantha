@@ -1,0 +1,777 @@
+Controlleur Admin:
+
+
+src/Controller/Admin/DashboardController.php
+
+<?php
+
+namespace App\Controller\Admin;
+
+use EasyCorp\Bundle\EasyAdminBundle\Config\Dashboard;
+use EasyCorp\Bundle\EasyAdminBundle\Config\MenuItem;
+use EasyCorp\Bundle\EasyAdminBundle\Controller\AbstractDashboardController;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\Routing\Annotation\Route;
+use Symfony\Component\Security\Core\Authorization\AuthorizationCheckerInterface;
+use App\Controller\Admin\PostCrudController;
+use App\Controller\Admin\CommentCrudController;
+use App\Entity\Post;
+use App\Entity\Comment;
+use App\Entity\User;
+
+class DashboardController extends AbstractDashboardController
+{
+    private AuthorizationCheckerInterface $authChecker;
+
+    public function __construct(AuthorizationCheckerInterface $authChecker)
+    {
+        $this->authChecker = $authChecker;
+    }
+
+    #[Route('/admin', name: 'admin')]
+    public function index(): Response
+    {
+        //vérifie si l'utilisateur a le rôle 'ROLE_ADMIN'
+        if (!$this->authChecker->isGranted('ROLE_ADMIN')) {
+            //ajoute un message flash indiquant que l'utilisateur n'a pas accès
+            $this->addFlash('error', 'Vous n\'êtes pas administrateur, vous n\'avez pas le droit d\'accéder à cette page.');
+
+            // si utilisateur pas connecté => redirige vers page de connexion
+            return $this->redirectToRoute('app_login');
+
+        }
+
+        //si l'utilisateur est un administrateur, affiche le tableau de bord
+        return $this->render('/admin/dashboard.html.twig');
+    }
+
+    public function configureDashboard(): Dashboard
+    {
+        return Dashboard::new()
+            ->setTitle('Blog Symfony 316');
+    }
+
+    public function configureMenuItems(): iterable
+    {
+        yield MenuItem::linkToDashboard('Tableau de bord', 'fa fa-home');
+        yield MenuItem::linkToCrud('Articles', 'fa fa-posts', Post::class);
+        yield MenuItem::linkToCrud('Commentaires', 'fa fa-comments', Comment::class);
+        yield MenuItem::linkToCrud('Users', 'fa fa-users', User::class);
+
+    }
+}
+
+
+===================================================================================================
+
+Exemple de Controller dans le dashboard :
+
+src/Controller/Admin/PostCrudController.php
+
+<?php
+
+namespace App\Controller\Admin;
+
+use App\Entity\Post;
+use App\Repository\PostRepository;
+use EasyCorp\Bundle\EasyAdminBundle\Controller\AbstractCrudController;
+use EasyCorp\Bundle\EasyAdminBundle\Field\IdField;
+use EasyCorp\Bundle\EasyAdminBundle\Field\TextEditorField;
+use EasyCorp\Bundle\EasyAdminBundle\Field\TextField;
+use Symfony\Component\Routing\Annotation\Route;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
+class PostCrudController extends AbstractCrudController
+{
+    public static function getEntityFqcn(): string
+    {
+        return Post::class;
+    }
+
+    #[Route('/', name: 'home')]
+    #[Route('/search', name: 'post_search', methods: ['GET'])]
+    public function home(Request $request, PostRepository $postRepository): Response
+    {
+        // Récupération du terme de recherche
+        $query = $request->query->get('q');
+
+        if ($query) {
+            // Si une recherche est effectuée, on récupère uniquement les résultats correspondants
+            $latestPosts = $postRepository->createQueryBuilder('p')
+                ->where('p.title LIKE :query OR p.content LIKE :query')
+                ->setParameter('query', "%$query%")
+                ->getQuery()
+                ->getResult();
+        } else {
+            // Sinon, on affiche les derniers articles
+            $latestPosts = $postRepository->findBy([], ['createdAt' => 'DESC'], 6);
+        }
+
+        return $this->render('home.html.twig', [
+            'query' => $query,
+            'latestPosts' => $latestPosts, // Utilisé pour afficher soit la recherche, soit les derniers articles
+        ]);
+    }
+
+
+
+}
+
+===================================================================================================
+Controller Home : 
+
+src/Controller/HomeController.php
+
+<?php
+
+namespace App\Controller;
+
+use App\Repository\PostRepository;
+use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
+use Symfony\Component\HttpFoundation\Response;
+
+class HomeController extends AbstractController
+{
+    public function home(PostRepository $postRepository): Response
+    {
+
+        $latestPosts = $postRepository->findBy([], ['createdAt' => 'DESC'], 3); // Récupère les 3 derniers posts
+        $posts = [];
+        $query = '';
+        return $this->render('home.html.twig', [
+            'posts' => $posts,
+            'query' => $query,
+            'latestPosts' => $latestPosts,
+        ]);
+    }
+}
+
+
+===================================================================================================
+
+Controller Inscription :
+
+src/Controller/RegistrationController.php
+
+<?php
+
+namespace App\Controller;
+
+use App\Entity\User;
+use App\Form\RegistrationFormType;
+use App\Security\AppCustomAuthenticator;
+use Doctrine\ORM\EntityManagerInterface;
+use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
+use Symfony\Bundle\SecurityBundle\Security;
+use Symfony\Component\Form\FormError;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\PasswordHasher\Hasher\UserPasswordHasherInterface;
+use Symfony\Component\Routing\Annotation\Route;
+
+class RegistrationController extends AbstractController
+{
+    //#[Route('/register', name: 'app_register')]
+    public function register(Request $request, UserPasswordHasherInterface $userPasswordHasher, EntityManagerInterface $entityManager): Response
+    {
+        $user = new User();
+        $form = $this->createForm(RegistrationFormType::class, $user);
+        $form->handleRequest($request);
+
+        if ($form->isSubmitted() && $form->isValid()) {
+
+            $name = $form->get('name')->getData();
+            $user->setName($name);
+
+            $plainPassword = $form->get('plainPassword')->get('first')->getData(); // Premier champ
+            $plainPasswordConfirmation = $form->get('plainPassword')->get('second')->getData(); // Deuxième champ
+
+            if ($plainPassword !== $plainPasswordConfirmation) {
+                // Ajouter une erreur si les mots de passe ne correspondent pas
+                $form->get('plainPassword')->addError(new FormError('Les mots de passe ne correspondent pas.'));
+                return $this->render('registration/register.html.twig', [
+                    'registrationForm' => $form->createView(),
+                ]);
+            }
+
+            // Hashage du mot de passe
+            $user->setPassword($userPasswordHasher->hashPassword($user, $plainPassword));
+
+            // Assigner le rôle
+            $user->setRoles([$form->get('isAdmin')->getData() ? 'ROLE_ADMIN' : 'ROLE_USER']);
+
+            // Sauvegarder l'utilisateur
+            $entityManager->persist($user);
+            $entityManager->flush();
+
+            // Rediriger vers la page de connexion
+            return $this->redirectToRoute('app_login');
+        }
+
+        return $this->render('registration/register.html.twig', [
+            'registrationForm' => $form->createView(),
+        ]);
+    }
+}
+
+===================================================================================================
+
+Le Controller du formulaire Inscritiption :
+
+src/Form/RegistrationFormType.php
+
+<?php
+
+namespace App\Form;
+
+use App\Entity\User;
+use Symfony\Component\Form\AbstractType;
+use Symfony\Component\Form\Extension\Core\Type\CheckboxType;
+use Symfony\Component\Form\Extension\Core\Type\EmailType;
+use Symfony\Component\Form\Extension\Core\Type\PasswordType;
+use Symfony\Component\Form\Extension\Core\Type\RepeatedType;
+use Symfony\Component\Form\Extension\Core\Type\SubmitType;
+use Symfony\Component\Form\Extension\Core\Type\TextType;
+use Symfony\Component\Form\FormBuilderInterface;
+use Symfony\Component\OptionsResolver\OptionsResolver;
+use Symfony\Component\Validator\Constraints\Length;
+use Symfony\Component\Validator\Constraints\NotBlank;
+
+class RegistrationFormType extends AbstractType
+{
+    public function buildForm(FormBuilderInterface $builder, array $options): void
+    {
+        $builder
+            ->add('email', EmailType::class, [
+                'label' => 'Email',
+                'constraints' => [
+                    new NotBlank([
+                        'message' => 'Veuillez entrer une adresse email',
+                    ]),
+                ],
+            ])
+            ->add('name', TextType::class, [
+                'label' => 'Nom',
+                'constraints' => [
+                    new NotBlank([
+                        'message' => 'Veuillez entrer un nom',
+                    ]),
+                ],
+            ])
+            ->add('plainPassword', RepeatedType::class, [
+                'type' => PasswordType::class,
+                'first_options' => [
+                    'label' => 'Mot de passe',
+                    'constraints' => [
+                        new NotBlank([
+                            'message' => 'Veuillez entrer un mot de passe',
+                        ]),
+                        new Length([
+                            'min' => 6,
+                            'minMessage' => 'Le mot de passe doit contenir au moins {{ limit }} caractères',
+                            'max' => 4096,
+                        ]),
+                    ],
+                ],
+                'second_options' => [
+                    'label' => 'Confirmez le mot de passe',
+                ],
+                'invalid_message' => 'Les mots de passe ne correspondent pas.',
+                'mapped' => false, // Ne mappe pas cette donnée sur l'entité User
+            ])
+            ->add('isAdmin', CheckboxType::class, [
+                'label' => 'Créer un compte administrateur',
+                'required' => false,
+                'mapped' => false,
+            ]);
+    }
+
+    public function configureOptions(OptionsResolver $resolver): void
+    {
+        $resolver->setDefaults([
+            'data_class' => User::class,
+        ]);
+    }
+}
+
+
+===================================================================================================
+Page de connexion Controller: 
+
+<?php
+
+namespace App\Controller;
+
+use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\Routing\Attribute\Route;
+use Symfony\Component\Security\Http\Authentication\AuthenticationUtils;
+
+class AuthController extends AbstractController
+{
+    #[Route(path: '/login', name: 'app_login')]
+    public function login(AuthenticationUtils $authenticationUtils): Response
+    {
+        // if ($this->getUser()) {
+        //     return $this->redirectToRoute('target_path');
+        // }
+
+        // get the login error if there is one
+        $error = $authenticationUtils->getLastAuthenticationError();
+        // last username entered by the user
+        $lastUsername = $authenticationUtils->getLastUsername();
+
+        return $this->render('security/login.html.twig', ['last_username' => $lastUsername, 'error' => $error]);
+    }
+
+    #[Route(path: '/logout', name: 'app_logout')]
+    public function logout(): void
+    {
+        throw new \LogicException('This method can be blank - it will be intercepted by the logout key on your firewall.');
+    }
+}
+===================================================================================================
+Controlleur Page connexion pour le formulaire : 
+
+<?php
+
+namespace App\Security;
+
+use Symfony\Component\HttpFoundation\RedirectResponse;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
+use Symfony\Component\Security\Core\Authentication\Token\TokenInterface;
+use Symfony\Component\Security\Http\Authenticator\AbstractLoginFormAuthenticator;
+use Symfony\Component\Security\Http\Authenticator\Passport\Badge\CsrfTokenBadge;
+use Symfony\Component\Security\Http\Authenticator\Passport\Badge\RememberMeBadge;
+use Symfony\Component\Security\Http\Authenticator\Passport\Badge\UserBadge;
+use Symfony\Component\Security\Http\Authenticator\Passport\Credentials\PasswordCredentials;
+use Symfony\Component\Security\Http\Authenticator\Passport\Passport;
+use Symfony\Component\Security\Http\SecurityRequestAttributes;
+use Symfony\Component\Security\Http\Util\TargetPathTrait;
+
+class AppCustomAuthenticator extends AbstractLoginFormAuthenticator
+{
+    use TargetPathTrait;
+
+    public const LOGIN_ROUTE = 'app_login';
+
+    public function __construct(private UrlGeneratorInterface $urlGenerator)
+    {
+    }
+
+    // récupérer email et mot de passe pour l'authentification
+    public function authenticate(Request $request): Passport
+    {
+        $email = $request->get('email');
+        $password = $request->get('password');
+
+        // enregistrer l'email pour l'afficher dans le formulaire de login
+        $request->getSession()->set(SecurityRequestAttributes::LAST_USERNAME, $email);
+
+        $csrfToken = $request->request->get('_csrf_token');
+
+        // créer un passport pour l'authentification
+        return new Passport(
+            new UserBadge($email),
+            new PasswordCredentials($password),
+            [
+                new CsrfTokenBadge('authenticate', $csrfToken),
+            ]
+        );
+    }
+
+    // après une authentification réussie, rediriger l'utilisateur
+    public function onAuthenticationSuccess(Request $request, TokenInterface $token, string $firewallName): ?Response
+    {
+
+        if ($targetPath = $this->getTargetPath($request->getSession(), $firewallName)) {
+            return new RedirectResponse($targetPath);
+        }
+
+        // rediriger vers la page d'accueil
+        return new RedirectResponse($this->urlGenerator->generate('home'));
+    }
+
+    // obtenir l'URL de la page de login
+    protected function getLoginUrl(Request $request): string
+    {
+        return $this->urlGenerator->generate(self::LOGIN_ROUTE);
+    }
+}
+
+===================================================================================================
+
+Template twig inscription :
+
+templates/registration/register.html.twig
+
+{% extends 'base.html.twig' %}
+
+{% block title %}S'inscrire{% endblock %}
+{% block body %}
+<div class="flex justify-center mt-8 bg-gray-100">
+    <div class="w-full max-w-md p-8 space-y-6 bg-white rounded-lg shadow-lg">
+        <h1 class="text-2xl font-bold text-center text-gray-700">S'inscrire</h1>
+
+        {{ form_errors(registrationForm) }}
+
+        {{ form_start(registrationForm, {'method': 'POST'}) }}
+            <div class="space-y-2">
+                {{ form_label(registrationForm.email, 'E-mail', {'attr': {'class': 'block text-sm font-medium text-gray-700'}}) }}
+                {{ form_widget(registrationForm.email, {
+                    'attr': {'class': 'w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500'}
+                }) }}
+            </div>
+
+            <div class="space-y-2">
+                {{ form_label(registrationForm.name, 'Nom', {'attr': {'class': 'block text-sm font-medium text-gray-700'}}) }}
+                {{ form_widget(registrationForm.name, {
+                    'attr': {'class': 'w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500'}
+                }) }}
+            </div>
+
+            <div class="space-y-4">
+                <div class="space-y-2">
+                    {{ form_label(registrationForm.plainPassword.first, 'Mot de passe', {'attr': {'class': 'block text-sm font-medium text-gray-700'}}) }}
+                    {{ form_widget(registrationForm.plainPassword.first, {
+                        'attr': {'class': 'w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500'}
+                    }) }}
+                </div>
+
+                <div class="space-y-2">
+                    {{ form_label(registrationForm.plainPassword.second, 'Confirmez le mot de passe', {'attr': {'class': 'block text-sm font-medium text-gray-700'}}) }}
+                    {{ form_widget(registrationForm.plainPassword.second, {
+                        'attr': {'class': 'w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500'}
+                    }) }}
+                </div>
+            </div>
+
+            <div class="flex items-center space-x-2">
+                {{ form_widget(registrationForm.isAdmin, {
+                    'attr': {'class': 'h-5 w-5 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded'}
+                }) }}
+                {{ form_label(registrationForm.isAdmin, 'Êtes-vous administrateur ?', {'attr': {'class': 'text-sm text-gray-700'}}) }}
+            </div>
+
+            <button type="submit" class="w-full py-2 mt-4 font-semibold text-white bg-indigo-600 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                S'inscrire
+            </button>
+        {{ form_end(registrationForm) }}
+    </div>
+</div>
+{% endblock %}
+
+
+===================================================================================================
+Template de la page d'e base :
+templates/base.html.twig
+
+<!DOCTYPE html>
+<html lang="fr">
+    <head>
+        <meta charset="UTF-8">
+        <title>{% block title %}Welcome!{% endblock %}</title>
+        <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 128 128%22><text y=%221.2em%22 font-size=%2296%22>⚫️</text><text y=%221.3em%22 x=%220.2em%22 font-size=%2276%22 fill=%22%23fff%22>sf</text></svg>">
+
+        {% block stylesheets %}
+            <link rel="stylesheet" href="{{ asset('styles/app.css') }}">
+        {% endblock %}
+
+        {% block javascripts %}
+            {% block importmap %}{{ importmap('app') }}{% endblock %}
+        {% endblock %}
+    </head>
+    <body class="bg-gray-100">
+        {% include 'inc/header.html.twig' %}
+
+        <!-- Affichage des messages flash -->
+        <div class="container mt-4">
+            {% for message in app.flashes('error') %}
+                <div class="alert alert-danger">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        </div>
+
+        <main>
+            {% block body %}{% endblock %}
+        </main>
+
+        {% include 'inc/footer.html.twig' %}
+    </body>
+</html>
+
+===================================================================================================
+Template de la page daccueil :
+
+templates/home.html.twig
+
+{% extends 'base.html.twig' %}
+
+{% block title %}Accueil{% endblock %}
+
+{% block body %}
+    <div class="max-w-4xl p-6 mx-auto mt-10">
+        <div class="mb-6">
+            <form action="{{ path('post_search') }}" method="get">
+                <input type="text" name="q" placeholder="Rechercher un article..." class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" value="{{ query|default('') }}">
+            </form>
+        </div>
+    </div>
+    <div class="last-post mt-5 px-3">
+    <h2 class="text-2xl font-bold text-gray-400 border-b-2 pb-3">Les derniers articles</h2>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3">
+    {% for post in latestPosts %}
+        <article class="mb-4 border shadow px-4 py-2">
+            <h2 class="font-bold text-xl text-center mb-2">{{ post.title }}</h2>
+            <p>{{ post.content|markdown|raw|striptags|slice(0, 200) ~ '...' }}</p>
+            <p class="text-indigo-600 underline cursor-pointer hover:text-indigo-700 visited:text-gray-500">
+				<a href="{{ path('app_actus_post', {'id': post.id}) }}">Lire la suite</a>
+			</p>
+            <p><small>Publié le {{ post.createdAt|date('d/m/Y') }}</small></p>
+            <p><small>Par {{ post.author }}</small></p>
+        </article>
+    {% else %}
+        <p>Aucun article trouvé.</p>
+    {% endfor %}
+    </div>
+    </div>
+    <p class="text-center text-indigo-600 underline cursor-pointer"><a href="{{ path('app_actus') }}">Voir tous les articles</a></p>
+{% endblock %}
+
+
+===================================================================================================
+Template de la page Connexion:
+
+{% extends 'base.html.twig' %}
+
+{% block title %}Se connecter{% endblock %}
+
+{% block body %}
+<div class="flex justify-center mt-8 bg-gray-100">
+    <div class="w-full max-w-md p-8 space-y-6 bg-white rounded-lg shadow-lg">
+        <h1 class="text-2xl font-bold text-center text-gray-700">Connexion</h1>
+
+        <form method="post" action="{{ path('app_login') }}" class="space-y-6">
+            {% if error %}
+                <div class="mb-4 text-center text-red-600">
+                    {{ error.messageKey|trans(error.messageData, 'security') }}
+                </div>
+            {% endif %}
+
+            {% if app.user %}
+                <div class="mb-4 text-center text-green-600">
+                    Vous êtes connecté en tant que {{ app.user.userIdentifier }}, <a href="{{ path('app_logout') }}" class="text-blue-600 hover:underline">Déconnexion</a>
+                </div>
+            {% endif %}
+
+            <div class="space-y-2">
+                <label for="inputEmail" class="block text-sm font-medium text-gray-700">E-mail</label>
+                <input type="email" value="{{ last_username }}" name="email" id="inputEmail" class="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" autocomplete="email" required autofocus>
+            </div>
+
+            <div class="space-y-2">
+                <label for="inputPassword" class="block text-sm font-medium text-gray-700">Mot de passe</label>
+                <input type="password" name="password" id="inputPassword" class="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" autocomplete="current-password" required>
+            </div>
+
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token('authenticate') }}">
+
+            <button type="submit" class="w-full py-2 font-semibold text-white bg-indigo-600 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                Se connecter
+            </button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+
+===================================================================================================
+
+Entity User : 
+<?php
+
+namespace App\Entity;
+
+use App\Repository\UserRepository;
+use Doctrine\DBAL\Types\Types;
+use Symfony\Component\Security\Core\User\UserInterface;
+use Symfony\Component\Security\Core\User\PasswordAuthenticatedUserInterface;
+use Doctrine\ORM\Mapping as ORM;
+use Doctrine\Common\Collections\ArrayCollection;
+use Doctrine\Common\Collections\Collection;
+
+#[ORM\Entity(repositoryClass: UserRepository::class)]
+class User implements UserInterface, PasswordAuthenticatedUserInterface
+{
+    #[ORM\Id]
+    #[ORM\GeneratedValue]
+    #[ORM\Column]
+    private ?int $id = null;
+
+    #[ORM\Column(length: 255)]
+    private ?string $Name = null;
+
+    #[ORM\Column(length: 255, unique: true)]
+    private ?string $email = null;
+
+    #[ORM\Column(length: 255)]
+    private ?string $password = null;
+
+    #[ORM\Column(type: Types::STRING)]
+    private string $roles = 'ROLE_USER';
+
+    #[ORM\OneToMany(targetEntity: Comment::class, mappedBy: 'user', orphanRemoval: true)]
+    private Collection $comments;
+
+    public function __construct()
+    {
+        $this->comments = new ArrayCollection();
+    }
+
+    public function getId(): ?int
+    {
+        return $this->id;
+    }
+
+    public function getName(): ?string
+    {
+        return $this->Name;
+    }
+
+    public function setName(string $Name): static
+    {
+        $this->Name = $Name;
+        return $this;
+    }
+
+    public function getEmail(): ?string
+    {
+        return $this->email;
+    }
+
+    public function setEmail(string $email): static
+    {
+        $this->email = $email;
+        return $this;
+    }
+
+    public function getPassword(): ?string
+    {
+        return $this->password;
+    }
+
+    public function setPassword(string $password): static
+    {
+        $this->password = $password;
+        return $this;
+    }
+
+    public function getRoles(): array
+    {
+        return explode(',', $this->roles);
+    }
+
+    public function setRoles(array $roles): static
+    {
+        $this->roles = implode(',', $roles);
+        return $this;
+    }
+
+    public function getUsername(): string
+    {
+        return $this->email; 
+    }
+
+    public function getSalt(): ?string
+    {
+        return null;
+    }
+
+    public function eraseCredentials(): void
+    {
+    }
+
+    public function __toString(): string
+    {
+        return $this->Name;
+    }
+
+    public function getComments(): Collection
+    {
+        return $this->comments;
+    }
+
+    public function getUserIdentifier(): string
+    {
+        return (string) $this->email;
+    }
+}
+
+===================================================================================================
+Footer : 
+<!DOCTYPE html>
+<html lang="fr">
+</head>
+<body class="flex flex-col min-h-screen bg-gray-100">
+    <div class="flex-grow">
+        <!-- Your content goes here -->
+    </div>
+
+    <footer class="fixed bottom-0 w-full py-4 mt-auto text-white bg-indigo-600">
+        <p class="text-sm text-center">&copy; {{ "now"|date("Y") }} - Site Symfony 316</p>
+    </footer>
+</body>
+
+
+</html>
+
+===================================================================================================
+Header :
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Site Symfony 316</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100">
+    
+    <header class="flex items-center justify-between w-full p-6 text-white bg-indigo-600 shadow-lg">
+        <h1 class="text-2xl font-extrabold">Site Symfony 316</h1>
+        
+        <nav class="space-x-6">
+        <a href="{{ path('home') }}" class="mx-2">Retourner à l'accueil</a>
+            <a href="/" class="text-white hover:underline">Accueil</a>
+            <a href="/contact" class="text-white hover:underline">Contact</a>
+            <a href="/a-propos-de-nous" class="text-white hover:underline">À propos</a>
+            {% if app.user %}
+            {% if 'ROLE_ADMIN' in app.user.roles %}
+                <a href="{{ path('admin_dashboard') }}" class="text-white hover:underline" >Accéder à l'administration</a>
+            {% endif %}
+            {% endif %}
+        </nav>
+        
+        <div class="p-2 bg-transparent rounded-lg">
+            {% if app.user %}
+                <p class="inline-block mr-4">Bonjour, <span class="font-semibold">{{ app.user.email }}</span> !</p>
+                <a href="{{ path('app_logout') }}"
+                   class="px-4 py-2 text-white transition-all duration-300 border border-white rounded-lg hover:bg-white hover:text-indigo-600">Se déconnecter</a>
+
+
+            {% else %}
+                <a href="{{ path('app_login') }}" 
+                   class="px-4 py-2 text-white transition-all duration-300 border border-white rounded-lg hover:bg-white hover:text-indigo-600">Se connecter</a>
+                <a href="{{ path('app_register') }}" 
+                   class="px-4 py-2 ml-4 text-white transition-all duration-300 border border-white rounded-lg hover:bg-white hover:text-indigo-600">S'inscrire</a>
+            {% endif %}
+        </div>
+
+    </header>
+    
+</body>
+</html>
+
