@@ -17,13 +17,14 @@ class registrationForm extends AbstractType
     public function buildForm(FormBuilderInterface $builder, array $options): void
     {
         $builder
-            ->add('name', TextType::class)
-            ->add('email', TextType::class)
-            ->add('password', PasswordType::class)
-            ->add('isAdmin', CheckboxType::class, [
-                'label' => 'Is Admin?',
-                'required' => false,
-            ]);
+        ->add('name')
+        ->add('password')
+        ->add('email')
+        ->add('isAdmin', CheckboxType::class, [
+            'required' => false,
+            'mapped' => false, 
+            'label' => 'Administrateur ?'
+        ]);
     }
 
     public function configureOptions(OptionsResolver $resolver)

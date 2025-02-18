@@ -13,7 +13,7 @@ use Doctrine\Common\Collections\Collection;
 
 
 #[ORM\Entity(repositoryClass: UserRepository::class)]
-class User
+class User implements UserInterface, PasswordAuthenticatedUserInterface
 {
     #[ORM\Id]
     #[ORM\GeneratedValue]
@@ -84,5 +84,12 @@ class User
     {
         $this->roles = implode(',', $roles);
         return $this;
+    }
+    public function eraseCredentials(): void
+    {
+    }
+    public function getUserIdentifier(): string
+    {
+        return (string) $this->email;
     }
 }
